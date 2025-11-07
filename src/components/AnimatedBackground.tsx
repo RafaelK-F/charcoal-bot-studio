@@ -1,4 +1,4 @@
-import { useEffect, useRef } from 'react';
+import { useEffect, useRef, useMemo } from 'react';
 
 interface AnimatedBackgroundProps {
   pageId?: string;
@@ -12,27 +12,53 @@ export const AnimatedBackground = ({
   style = 'subtle' 
 }: AnimatedBackgroundProps) => {
   const canvasRef = useRef<HTMLCanvasElement>(null);
-  const particles = useRef<Array<{
-    x: number;
-    y: number;
-    vx: number;
-    vy: number;
-    size: number;
-    opacity: number;
-    speed: number;
-  }>>([]);
+  const animationFrameRef = useRef<number>();
+  const lastFrameTimeRef = useRef<number>(0);
+
+  // Optimized density - 70% fewer particles
+  const densityMultiplier = useMemo(() => ({
+    low: 50000,
+    medium: 30000,
+    high: 20000
+  }[density]), [density]);
+
+  // Style configs
+  const styleConfig = useMemo(() => ({
+    subtle: {
+      baseOpacity: 0.12,
+      maxOpacity: 0.3,
+      connectionDistance: 150,
+      connectionOpacity: 0.1,
+      maxConnections: 2
+    },
+    vibrant: {
+      baseOpacity: 0.25,
+      maxOpacity: 0.6,
+      connectionDistance: 180,
+      connectionOpacity: 0.25,
+      maxConnections: 3
+    },
+    minimal: {
+      baseOpacity: 0.05,
+      maxOpacity: 0.15,
+      connectionDistance: 120,
+      connectionOpacity: 0.06,
+      maxConnections: 1
+    }
+  }[style]), [style]);
 
   useEffect(() => {
     const canvas = canvasRef.current;
     if (!canvas) return;
 
-    const ctx = canvas.getContext('2d');
+    const ctx = canvas.getContext('2d', { 
+      alpha: true,
+      desynchronized: true // Better performance
+    });
     if (!ctx) return;
 
-    // Create unique seed for this page to ensure different patterns
+    // Page seed for consistent randomness
     const pageSeed = pageId.split('').reduce((acc, char) => acc + char.charCodeAt(0), 0);
-    
-    // Seeded random function for consistent per-page randomness
     let seed = pageSeed;
     const seededRandom = () => {
       seed = (seed * 9301 + 49297) % 233280;
@@ -41,113 +67,80 @@ export const AnimatedBackground = ({
 
     const resizeCanvas = () => {
       canvas.width = window.innerWidth;
-      canvas.height = document.documentElement.scrollHeight || window.innerHeight;
+      canvas.height = Math.min(document.documentElement.scrollHeight, window.innerHeight * 2);
     };
 
     resizeCanvas();
-    window.addEventListener('resize', resizeCanvas);
     
-    // Density settings - 20% more particles
-    const densityMultiplier = {
-      low: 16000,
-      medium: 9600,
-      high: 6400
-    }[density];
+    // Optimized particle array
+    const particles: Array<{
+      x: number;
+      y: number;
+      vx: number;
+      vy: number;
+      size: number;
+      opacity: number;
+      connections: number;
+    }> = [];
 
-    // Style settings
-    const styleConfig = {
-      subtle: {
-        baseOpacity: 0.15,
-        maxOpacity: 0.4,
-        connectionDistance: 80,
-        connectionOpacity: 0.15
-      },
-      vibrant: {
-        baseOpacity: 0.3,
-        maxOpacity: 0.7,
-        connectionDistance: 120,
-        connectionOpacity: 0.3
-      },
-      minimal: {
-        baseOpacity: 0.05,
-        maxOpacity: 0.2,
-        connectionDistance: 60,
-        connectionOpacity: 0.08
-      }
-    }[style];
-
-    // Initialize particles with page-specific randomness
+    // Initialize with fewer particles
     const initParticles = () => {
-      particles.current = [];
-      seed = pageSeed; // Reset seed for consistent generation
+      particles.length = 0;
+      seed = pageSeed;
       
-      const particleCount = Math.floor((canvas.width * canvas.height) / densityMultiplier);
+      const particleCount = Math.min(
+        Math.floor((canvas.width * canvas.height) / densityMultiplier),
+        60 // Hard cap at 60 particles
+      );
       
-      // Create main particles with page-specific distribution
       for (let i = 0; i < particleCount; i++) {
-        // Use seeded random for consistent per-page placement
         const x = seededRandom() * canvas.width;
         const y = seededRandom() * canvas.height;
-        
-        // Page-specific movement patterns
         const angle = seededRandom() * Math.PI * 2;
-        const baseSpeed = seededRandom() * 0.8 + 0.2;
+        const speed = seededRandom() * 0.3 + 0.1;
         
-        particles.current.push({
-          x: x,
-          y: y,
-          vx: Math.cos(angle) * baseSpeed * 0.4,
-          vy: Math.sin(angle) * baseSpeed * 0.4,
-          size: seededRandom() * 2.5 + 0.5,
+        particles.push({
+          x,
+          y,
+          vx: Math.cos(angle) * speed,
+          vy: Math.sin(angle) * speed,
+          size: seededRandom() * 1.5 + 0.8,
           opacity: seededRandom() * (styleConfig.maxOpacity - styleConfig.baseOpacity) + styleConfig.baseOpacity,
-          speed: seededRandom() * 0.6 + 0.3
-        });
-      }
-      
-      // Add page-specific special particles
-      const specialCount = Math.floor(particleCount * 0.15);
-      for (let i = 0; i < specialCount; i++) {
-        const x = seededRandom() * canvas.width;
-        const y = seededRandom() * canvas.height;
-        
-        particles.current.push({
-          x: x,
-          y: y,
-          vx: (seededRandom() - 0.5) * 1.5,
-          vy: (seededRandom() - 0.5) * 1.5,
-          size: seededRandom() * 1.8 + 0.3,
-          opacity: seededRandom() * styleConfig.baseOpacity + 0.02,
-          speed: seededRandom() * 1.2 + 0.4
-        });
-      }
-
-      // Add floating particles that move vertically through entire page
-      const floatingCount = Math.floor(particleCount * 0.1);
-      for (let i = 0; i < floatingCount; i++) {
-        particles.current.push({
-          x: seededRandom() * canvas.width,
-          y: seededRandom() * canvas.height,
-          vx: (seededRandom() - 0.5) * 0.3,
-          vy: seededRandom() * 0.8 + 0.2, // Always moving down
-          size: seededRandom() * 1.2 + 0.8,
-          opacity: seededRandom() * styleConfig.maxOpacity * 0.6,
-          speed: seededRandom() * 0.4 + 0.1
+          connections: 0
         });
       }
     };
 
     initParticles();
 
-    const animate = () => {
+    // Throttled animation - 30fps instead of 60fps
+    const FPS_LIMIT = 30;
+    const FRAME_MIN_TIME = 1000 / FPS_LIMIT;
+
+    const animate = (currentTime: number) => {
+      const elapsed = currentTime - lastFrameTimeRef.current;
+      
+      if (elapsed < FRAME_MIN_TIME) {
+        animationFrameRef.current = requestAnimationFrame(animate);
+        return;
+      }
+
+      lastFrameTimeRef.current = currentTime - (elapsed % FRAME_MIN_TIME);
+
       if (!ctx || !canvas) return;
 
       ctx.clearRect(0, 0, canvas.width, canvas.height);
 
+      // Reset connection counts
+      particles.forEach(p => p.connections = 0);
+
       // Update and draw particles
-      particles.current.forEach((particle, index) => {
+      for (let i = 0; i < particles.length; i++) {
+        const particle = particles[i];
+        
         // Update position
-        particle.x += particle.vx * particle.speed;
-        particle.y += particle.vy * particle.speed;
+        particle.x += particle.vx;
+        particle.y += particle.vy;
 
         // Wrap around edges
         if (particle.x < 0) particle.x = canvas.width;
@@ -161,84 +154,74 @@ export const AnimatedBackground = ({
         ctx.fillStyle = `hsla(220, 8%, 88%, ${particle.opacity})`;
         ctx.fill();
 
-        // Draw connections to nearby particles using style config
-        particles.current.slice(index + 1).forEach(otherParticle => {
-          const dx = particle.x - otherParticle.x;
-          const dy = particle.y - otherParticle.y;
-          const distance = Math.sqrt(dx * dx + dy * dy);
+        // Optimized connections - only check nearby particles with limit
+        if (particle.connections < styleConfig.maxConnections) {
+          for (let j = i + 1; j < particles.length; j++) {
+            const other = particles[j];
+            
+            if (other.connections >= styleConfig.maxConnections) continue;
 
-          if (distance < styleConfig.connectionDistance) {
-            ctx.beginPath();
-            ctx.moveTo(particle.x, particle.y);
-            ctx.lineTo(otherParticle.x, otherParticle.y);
-            const opacity = (1 - distance / styleConfig.connectionDistance) * styleConfig.connectionOpacity;
-            ctx.strokeStyle = `hsla(220, 8%, 88%, ${opacity})`;
-            ctx.lineWidth = 0.5;
-            ctx.stroke();
+            const dx = particle.x - other.x;
+            const dy = particle.y - other.y;
+            const distSq = dx * dx + dy * dy;
+            const maxDistSq = styleConfig.connectionDistance * styleConfig.connectionDistance;
+
+            if (distSq < maxDistSq) {
+              const distance = Math.sqrt(distSq);
+              ctx.beginPath();
+              ctx.moveTo(particle.x, particle.y);
+              ctx.lineTo(other.x, other.y);
+              const opacity = (1 - distance / styleConfig.connectionDistance) * styleConfig.connectionOpacity;
+              ctx.strokeStyle = `hsla(220, 8%, 88%, ${opacity})`;
+              ctx.lineWidth = 0.5;
+              ctx.stroke();
+              
+              particle.connections++;
+              other.connections++;
+              
+              if (particle.connections >= styleConfig.maxConnections) break;
+            }
           }
-        });
-      });
+        }
+      }
 
-      requestAnimationFrame(animate);
+      animationFrameRef.current = requestAnimationFrame(animate);
     };
 
-    animate();
+    animationFrameRef.current = requestAnimationFrame(animate);
+
+    const handleResize = () => {
+      resizeCanvas();
+      initParticles();
+    };
+
+    window.addEventListener('resize', handleResize);
 
     return () => {
-      window.removeEventListener('resize', resizeCanvas);
+      window.removeEventListener('resize', handleResize);
+      if (animationFrameRef.current) {
+        cancelAnimationFrame(animationFrameRef.current);
+      }
     };
-  }, [pageId, density, style]);
+  }, [pageId, densityMultiplier, styleConfig]);
 
   return (
     <>
-      {/* Animated particles canvas */}
+      {/* Optimized particles canvas */}
       <canvas
         ref={canvasRef}
         className="absolute inset-0 z-0"
-        style={{ background: 'transparent' }}
+        style={{ background: 'transparent', willChange: 'transform' }}
       />
       
-      {/* Gradient overlays */}
-      <div className="absolute inset-0 z-1">
-        {/* Primary gradient overlay */}
+      {/* Simplified gradient overlays - CSS only */}
+      <div className="absolute inset-0 z-1 pointer-events-none">
         <div 
-          className="absolute inset-0 opacity-30"
+          className="absolute inset-0 opacity-25"
           style={{
             background: `
-              radial-gradient(circle at 25% 25%, hsl(220 8% 88% / 0.1) 0%, transparent 50%),
-              radial-gradient(circle at 75% 75%, hsl(220 13% 10% / 0.2) 0%, transparent 50%),
-              linear-gradient(135deg, 
-                hsl(220 15% 4%) 0%,
-                hsl(220 13% 6%) 50%, 
-                hsl(220 15% 4%) 100%
-              )
-            `
-          }}
-        />
-        
-        {/* Subtle moving gradients */}
-        <div 
-          className="absolute inset-0 opacity-20 animate-pulse"
-          style={{
-            background: `
-              radial-gradient(ellipse at 20% 80%, hsl(220 8% 88% / 0.05) 0%, transparent 60%),
-              radial-gradient(ellipse at 80% 20%, hsl(220 13% 10% / 0.08) 0%, transparent 60%)
-            `,
-            animationDuration: '8s'
-          }}
-        />
-
-        {/* Final overlay to ensure readability */}
-        <div 
-          className="absolute inset-0 z-2"
-          style={{
-            background: `
-              linear-gradient(
-                to bottom, 
-                hsl(220 15% 4% / 0.3) 0%,
-                hsl(220 15% 4% / 0.1) 50%,
-                hsl(220 15% 4% / 0.3) 100%
-              )
+              radial-gradient(circle at 25% 25%, hsl(220 8% 88% / 0.08) 0%, transparent 45%),
+              radial-gradient(circle at 75% 75%, hsl(220 13% 10% / 0.15) 0%, transparent 45%)
             `
           }}
         />
